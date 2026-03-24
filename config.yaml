@@ -2,11 +2,13 @@
 # 参考 POPGENAGENT 的 config.yaml.example
 
 # ========== LLM 配置 ==========
+# 默认模型配置（可被 api_providers.yaml 中的用户选择覆盖）
 llm:
   base_url: "http://localhost:11434"
   model: "qwen3:4b"
+  api_key: ""
   temperature: 0.7
-  timeout: 600
+  timeout: 800
   max_tokens: 4096
 
 # ========== 路径配置 ==========

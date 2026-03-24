@@ -13,17 +13,37 @@ skill_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, skill_dir)
 
 
-def run_cli():
+def run_cli(model_override: str = None):
     """命令行 REPL 模式"""
     from core.agent import BioAgent
-    
+    from core.provider_manager import detect_available_providers, user_select_model
+
     print("=" * 50)
     print("BioAgent - 生物信息学分析助手")
     print("=" * 50)
+
+    # 确定模型配置
+    selected = None
+    if model_override:
+        # --model 参数指定，使用 config.yaml 中的配置
+        selected = None
+    else:
+        # 自动检测并让用户选择
+        providers = detect_available_providers()
+        selected = user_select_model(providers)
+
+    # 构建 Agent 参数
+    agent_kwargs = {}
+    if selected:
+        agent_kwargs["model"] = selected["model"]
+        # 临时覆盖 LLM 配置
+        agent_kwargs["_base_url"] = selected["base_url"]
+        agent_kwargs["_api_key"] = selected["api_key"]
+
     print("输入您的分析需求，输入 'quit' 或 'exit' 退出")
     print()
-    
-    agent = BioAgent()
+
+    agent = BioAgent(**agent_kwargs)
     
     while True:
         try:
@@ -65,8 +85,8 @@ def main():
     parser.add_argument(
         "--port", 
         type=int, 
-        default=7860,
-        help="Web/API 端口 (默认: 7860)"
+        default=7861,
+        help="Web/API 端口 (默认: 7861)"
     )
     parser.add_argument(
         "--share", 
@@ -88,7 +108,7 @@ def main():
     args = parser.parse_args()
     
     if args.mode == "cli":
-        run_cli()
+        run_cli(model_override=args.model)
     elif args.mode == "web":
         run_web(share=args.share, debug=args.debug, port=args.port)
     elif args.mode == "api":

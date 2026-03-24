@@ -19,6 +19,7 @@ class LLMConfig:
     """LLM 配置"""
     base_url: str = "http://localhost:11434"
     model: str = "qwen3:4b"
+    api_key: str = ""  # API Key，本地模型(Ollama)不需要
     temperature: float = 0.7
     timeout: int = 300
     max_tokens: int = 4096

@@ -28,6 +28,8 @@ class BioAgent:
         enable_planner: bool = False,  # 默认关闭，模型升级后可启用
         planner_threshold: int = 2,
         session_id: str = None,
+        _base_url: str = None,   # 运行时覆盖（来自 provider_manager 选择）
+        _api_key: str = None,    # 运行时覆盖
     ):
         from config_loader import get_config, get_llm_config
         from tools.base import ToolRegistry
@@ -45,8 +47,9 @@ class BioAgent:
         # FC 循环配置
         self.max_tool_rounds = cfg.agent.max_tool_rounds
         
-        # LLM 配置
-        self.llm_base_url = cfg.llm.base_url
+        # LLM 配置（支持运行时覆盖）
+        self.llm_base_url = _base_url or cfg.llm.base_url
+        self.llm_api_key = _api_key or cfg.llm.api_key
         self.llm_timeout = cfg.llm.timeout
         self.temperature = cfg.llm.temperature
         
@@ -164,7 +167,11 @@ class BioAgent:
             if "error" in result:
                 return f"错误: {result['error']}"
             
-            message = result["choices"][0]["message"]
+            choices = result.get("choices", [])
+            if not choices:
+                return "错误: LLM 未返回有效响应（choices 为空）"
+            
+            message = choices[0].get("message", {})
             tool_calls = message.get("tool_calls", [])
             
             if not tool_calls:
@@ -258,11 +265,15 @@ class BioAgent:
         model: str = None,
         temperature: float = None,
     ) -> Dict[str, Any]:
-        """调用 LLM API"""
+        """调用 LLM API（支持本地 Ollama 和远程 API）"""
         model = model or self.model
         temperature = temperature or self.temperature
         
         headers = {"Content-Type": "application/json"}
+        # API Key 认证（本地 Ollama 不需要）
+        if self.llm_api_key:
+            headers["Authorization"] = f"Bearer {self.llm_api_key}"
+        
         payload = {
             "model": model,
             "messages": messages,
@@ -273,19 +284,54 @@ class BioAgent:
         if tools:
             payload["tools"] = tools
         
+        # 智能拼接 URL，支持多种 base_url 格式
+        if self.llm_base_url.endswith("/v1/chat/completions"):
+            llm_url = self.llm_base_url
+        elif self.llm_base_url.endswith("/v1"):
+            llm_url = f"{self.llm_base_url}/chat/completions"
+        else:
+            llm_url = f"{self.llm_base_url}/v1/chat/completions"
+        
         try:
             response = requests.post(
-                f"{self.llm_base_url}/v1/chat/completions",
+                llm_url,
                 headers=headers,
                 json=payload,
                 timeout=self.llm_timeout
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+            # 兼容非标准 API 响应格式
+            if "choices" not in data:
+                # 心流等 API 的业务错误格式: {"status": "435", "msg": "Model not support"}
+                if "msg" in data or "error" in data or "status" in data:
+                    err_msg = data.get("msg") or data.get("error", {}).get("message", "")
+                    status = data.get("status", "")
+                    return {"error": f"API 错误 (status={status}): {err_msg}"}
+                # 尝试从嵌套结构中提取
+                if "message" in data and "content" in data["message"]:
+                    # 格式: {"message": {"content": "..."}}
+                    data["choices"] = [{"message": data["message"]}]
+                elif "content" in data:
+                    # 格式: {"content": "..."}
+                    data["choices"] = [{"message": {"role": "assistant", "content": data["content"]}}]
+                elif "response" in data:
+                    # Ollama 原生格式: {"response": "..."}
+                    data["choices"] = [{"message": {"role": "assistant", "content": data["response"]}}]
+                else:
+                    # 无法解析的格式，返回友好错误
+                    return {"error": f"API 返回格式不兼容: {json.dumps(data, ensure_ascii=False)[:500]}"}
+
+            return data
         except requests.exceptions.Timeout:
             return {"error": f"LLM调用超时（{self.llm_timeout}s），请尝试：1) 缩小问题范围 2) 增大config.yaml中timeout值"}
         except requests.exceptions.ConnectionError:
-            return {"error": "无法连接LLM服务，请确认Ollama正在运行（ollama serve）"}
+            return {"error": "无法连接LLM服务，请确认Ollama正在运行或API地址正确"}
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 401:
+                return {"error": "API Key 认证失败，请检查 config.yaml 中的 api_key 配置"}
+            return {"error": f"LLM调用失败: {str(e)}"}
         except requests.exceptions.RequestException as e:
             return {"error": f"LLM调用失败: {str(e)}"}
     
