@@ -103,7 +103,7 @@ def create_app() -> gr.Blocks:
                 try:
                     from tools.base import ToolRegistry
                     tools = ToolRegistry.list_tools()
-                    tools_status.value = {"tools_count": len(tools), "tools": list(tools.keys())}
+                    tools_status.value = {"tools_count": len(tools), "tools": [t.name for t in tools]}
                 except Exception as e:
                     tools_status.value = {"error": str(e)}
         

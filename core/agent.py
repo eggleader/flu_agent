@@ -6,12 +6,7 @@ import json
 import os
 import requests
 from typing import Dict, List, Any, Optional
-from .prompts import (
-    SYSTEM_PROMPT,
-    PLANNER_PROMPT,
-    EXECUTOR_PROMPT,
-    SUMMARIZER_PROMPT
-)
+from .prompts import SYSTEM_PROMPT
 
 
 class BioAgent:
@@ -46,6 +41,9 @@ class BioAgent:
         self.enable_planner = enable_planner and cfg.agent.enable_planner
         self.planner_threshold = planner_threshold or cfg.agent.planner_threshold
         self.session_id = session_id
+        
+        # FC 循环配置
+        self.max_tool_rounds = cfg.agent.max_tool_rounds
         
         # LLM 配置
         self.llm_base_url = cfg.llm.base_url
@@ -159,7 +157,7 @@ class BioAgent:
         ]
         
         # 多轮 FC 循环
-        max_rounds = getattr(self, 'max_tool_rounds', 10)
+        max_rounds = self.max_tool_rounds
         for round_idx in range(max_rounds):
             result = self._call_llm(messages, tools=self.tools)
             
@@ -198,85 +196,60 @@ class BioAgent:
         # 达到最大轮次，返回最后结果
         return "已达到最大工具调用轮次，请检查任务是否完成。"
     
+    def _find_similar_tool(self, tool_name: str) -> Optional[str]:
+        """从已注册工具中找到最相似的工具名（模糊匹配）"""
+        from tools.base import ToolRegistry
+        import difflib
+        
+        available_tools = list(ToolRegistry._tools.keys())
+        if not available_tools:
+            return None
+        
+        # 使用 difflib 找最相似的工具名
+        matches = difflib.get_close_matches(tool_name, available_tools, n=1, cutoff=0.6)
+        return matches[0] if matches else None
+    
     def _execute_tool(self, tool_name: str, args: Dict) -> str:
-        """执行工具"""
+        """执行工具（带模糊匹配自动纠正）"""
         from tools import execute_tool
-        try:
-            return execute_tool(tool_name, **args)
-        except Exception as e:
-            return f"工具执行错误: {str(e)}"
-    
-    def _process_response(self, result: Dict, messages: List[Dict]) -> str:
-        """处理 LLM 响应（工具调用或直接回复）"""
-        choices = result.get("choices", [])
-        if not choices:
-            return "错误: 无有效响应"
+        from tools.base import ToolRegistry
         
-        message = choices[0].get("message", {})
+        # 精确匹配
+        if ToolRegistry.has_tool(tool_name):
+            try:
+                return execute_tool(tool_name, **args)
+            except Exception as e:
+                return f"工具执行错误: {str(e)}"
         
-        # 检查工具调用
-        tool_calls = message.get("tool_calls", [])
-        if tool_calls:
-            return self._handle_tool_calls(tool_calls, messages)
+        # 模糊匹配：尝试找到最相似的工具名
+        best_match = self._find_similar_tool(tool_name)
+        if best_match:
+            # 尝试自动映射参数（针对常见参数名错误）
+            import inspect
+            try:
+                sig = inspect.signature(execute_tool)
+                param_names = list(sig.parameters.keys())
+                
+                # 如果原始参数不在目标工具中，尝试映射
+                corrected_args = {}
+                for k, v in args.items():
+                    if k in param_names:
+                        corrected_args[k] = v
+                    elif k == "input_file" and "file" in param_names:
+                        corrected_args["file"] = v
+                    elif k == "output_file" and "output" in param_names:
+                        corrected_args["output"] = v
+                    else:
+                        corrected_args[k] = v  # 保留原参数，让工具报错
+                
+                result = execute_tool(best_match, **corrected_args)
+                return f"[自动纠正工具名: '{tool_name}' → '{best_match}', 参数已适配]\n{result}"
+            except Exception as e:
+                return f"工具名已自动纠正为 '{best_match}'，但参数适配失败: {str(e)}\n请检查工具参数格式。"
         
-        # 直接回复
-        content = message.get("content", "")
-        self.conversation_history.append({"role": "user", "content": messages[-1]["content"]})
-        self.conversation_history.append({"role": "assistant", "content": content})
-        
-        return content
-    
-    def _handle_tool_calls(self, tool_calls: List[Dict], messages: List[Dict]) -> str:
-        """处理工具调用"""
-        from tools import execute_tool
-        
-        # 记录用户消息到历史
-        self.conversation_history.append({"role": "user", "content": messages[-1]["content"]})
-        
-        results = []
-        for tc in tool_calls:
-            func = tc.get("function", {})
-            tool_name = func.get("name")
-            args = json.loads(func.get("arguments", "{}"))
-            
-            result = execute_tool(tool_name, **args)
-            results.append({
-                "tool": tool_name,
-                "result": result
-            })
-            
-            # 添加工具结果到消息
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [tc]
-            })
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": json.dumps(result, ensure_ascii=False)
-            })
-        
-        # 再次调用 LLM 生成最终回复
-        result = self._call_llm(messages)
-        
-        if "error" in result:
-            return f"工具执行成功，但生成回复失败: {result['error']}"
-        
-        content = self._extract_content(result)
-        
-        # 如果 LLM 返回空内容，用工具结果拼接兜底
-        if not content or content == "错误: 无有效响应":
-            parts = []
-            for r in results:
-                preview = r["result"][:500] + "..." if len(r["result"]) > 500 else r["result"]
-                parts.append(f"**{r['tool']}** 结果:\n{preview}")
-            content = "\n\n".join(parts)
-        
-        # 保存最终回复到历史
-        self.conversation_history.append({"role": "assistant", "content": content})
-        
-        return content
+        # 无法匹配
+        available = ", ".join(ToolRegistry._tools.keys())
+        return f"错误: 未知工具 '{tool_name}'。\n可用工具: {available}"
     
     def _call_llm(
         self,
@@ -309,6 +282,10 @@ class BioAgent:
             )
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.Timeout:
+            return {"error": f"LLM调用超时（{self.llm_timeout}s），请尝试：1) 缩小问题范围 2) 增大config.yaml中timeout值"}
+        except requests.exceptions.ConnectionError:
+            return {"error": "无法连接LLM服务，请确认Ollama正在运行（ollama serve）"}
         except requests.exceptions.RequestException as e:
             return {"error": f"LLM调用失败: {str(e)}"}
     
