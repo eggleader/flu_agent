@@ -1,12 +1,16 @@
 """
 BioAgent 核心类
 参考 POPGENAGENT 架构设计，引入 Planner-Executor 模式
+支持三角色 Agent 模式（Ask-Plan-Craft）
 """
 import json
 import os
 import requests
 from typing import Dict, List, Any, Optional
 from .prompts import SYSTEM_PROMPT
+from .ask_agent import AskAgent
+from .plan_agent import PlanAgent
+from .craft_agent import CraftAgent
 
 
 class BioAgent:
@@ -87,6 +91,35 @@ class BioAgent:
                 timeout=self.llm_timeout,
                 tools=self.tools,
             )
+        
+        # 三角色 Agent（Ask-Plan-Craft）
+        self.multi_agent_enabled = cfg.multi_agent.enable
+        self.ask_agent = None
+        self.plan_agent = None
+        self.craft_agent = None
+        if self.multi_agent_enabled:
+            # 创建 LLM 客户端封装
+            llm_client = lambda messages, tools=None: self._call_llm(messages, tools=tools)
+            # 创建工具执行器封装
+            tool_executor = lambda name, args: self._execute_tool(name, args)
+            
+            self.ask_agent = AskAgent(
+                llm_client=llm_client,
+                max_rounds=cfg.multi_agent.ask.max_rounds,
+            )
+            self.plan_agent = PlanAgent(
+                llm_client=llm_client,
+                tools=self.tools,
+                validate_dataflow=cfg.multi_agent.plan.validate_dataflow,
+            )
+            self.craft_agent = CraftAgent(
+                llm_client=llm_client,
+                tool_executor=tool_executor,
+                tools=self.tools,
+                max_tool_rounds=cfg.multi_agent.craft.max_tool_rounds,
+                retry_on_fail=cfg.multi_agent.craft.retry_on_fail,
+            )
+            print(f"[BioAgent] 三角色模式已启用: Ask-Plan-Craft")
     
     def _load_knowledge(self) -> str:
         """加载知识库内容"""
@@ -179,7 +212,7 @@ class BioAgent:
                 content = message.get("content", "")
                 self.conversation_history.append({"role": "user", "content": user_input})
                 self.conversation_history.append({"role": "assistant", "content": content})
-                return content
+                return self._save_result(user_input, content)
             
             # 有工具调用，执行并回填结果
             tool_results = []
@@ -201,7 +234,51 @@ class BioAgent:
             # 循环继续，LLM 会根据工具结果决定下一步
         
         # 达到最大轮次，返回最后结果
-        return "已达到最大工具调用轮次，请检查任务是否完成。"
+        result = "已达到最大工具调用轮次，请检查任务是否完成。"
+        return self._save_result(user_input, result)
+    
+    def _save_result(self, user_input: str, result: str) -> str:
+        """保存分析结果到 reports 目录"""
+        import datetime
+        from config_loader import get_reports_dir
+        
+        try:
+            reports_dir = get_reports_dir()
+            os.makedirs(reports_dir, exist_ok=True)
+            
+            # 生成文件名
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"analysis_{timestamp}.md"
+            filepath = os.path.join(reports_dir, filename)
+            
+            # 构建报告内容
+            report_content = f"""# BioAgent 分析报告
+
+**时间**: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## 用户需求
+
+{user_input}
+
+## 分析结果
+
+{result}
+
+---
+*由 BioAgent v2.0 生成*
+"""
+            
+            # 保存文件
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(report_content)
+            
+            # 返回结果加上保存路径
+            return f"{result}\n\n📁 结果已保存到: `{filepath}`"
+            
+        except Exception as e:
+            # 保存失败不影响主流程
+            print(f"[BioAgent] 警告: 保存结果失败: {e}")
+            return result
     
     def _find_similar_tool(self, tool_name: str) -> Optional[str]:
         """从已注册工具中找到最相似的工具名（模糊匹配）"""
@@ -351,3 +428,117 @@ class BioAgent:
     def get_conversation_history(self) -> List[Dict[str, str]]:
         """获取对话历史"""
         return self.conversation_history.copy()
+    
+    def chat_v2(self, user_input: str) -> str:
+        """
+        处理用户输入 - 三角色 Agent 模式（Ask-Plan-Craft）
+        
+        工作流程：
+        1. Ask Agent: 需求理解与多轮澄清
+        2. Plan Agent: 技术路线规划 + 数据流校验
+        3. Craft Agent: 按计划执行 + 生成报告
+        """
+        if not self.multi_agent_enabled:
+            # 自动启用三角色模式
+            cfg = None
+            try:
+                from config_loader import get_config
+                cfg = get_config()
+            except Exception:
+                pass
+            
+            if cfg:
+                # 重新初始化三角色
+                self.multi_agent_enabled = True
+                llm_client = lambda messages, tools=None: self._call_llm(messages, tools=tools)
+                tool_executor = lambda name, args: self._execute_tool(name, args)
+                
+                self.ask_agent = AskAgent(
+                    llm_client=llm_client,
+                    max_rounds=cfg.multi_agent.ask.max_rounds,
+                )
+                self.plan_agent = PlanAgent(
+                    llm_client=llm_client,
+                    tools=self.tools,
+                    validate_dataflow=cfg.multi_agent.plan.validate_dataflow,
+                )
+                self.craft_agent = CraftAgent(
+                    llm_client=llm_client,
+                    tool_executor=tool_executor,
+                    tools=self.tools,
+                    max_tool_rounds=cfg.multi_agent.craft.max_tool_rounds,
+                    retry_on_fail=cfg.multi_agent.craft.retry_on_fail,
+                )
+        
+        # ========== Stage 1: Ask Agent - 需求理解与澄清 ==========
+        print("\n" + "="*50)
+        print("[Stage 1] Ask Agent - 需求理解")
+        print("="*50)
+        
+        ask_result = self.ask_agent.process(
+            user_input=user_input,
+            conversation_history=self.conversation_history,
+        )
+        
+        # 如果需要澄清，返回澄清问题
+        if ask_result.get("status") == "clarify":
+            self.conversation_history.append({"role": "user", "content": user_input})
+            self.conversation_history.append({"role": "assistant", "content": ask_result.get("message", "")})
+            return f"{ask_result.get('message', '')}\n\n（您可以直接回答上述问题，或提供更多信息）"
+        
+        # 需求已明确
+        clarified_input = ask_result.get("summary", user_input)
+        print(f"需求已明确: {clarified_input[:100]}...")
+        
+        # ========== Stage 2: Plan Agent - 技术路线规划 ==========
+        print("\n" + "="*50)
+        print("[Stage 2] Plan Agent - 技术路线规划")
+        print("="*50)
+        
+        plan_result = self.plan_agent.process(
+            user_input=clarified_input,
+            knowledge=self.knowledge_context,
+        )
+        
+        if plan_result.get("status") == "error":
+            return f"计划制定失败: {plan_result.get('message', '')}"
+        
+        plan = plan_result.get("plan", {})
+        print(f"计划: {plan.get('plan', 'N/A')[:100]}...")
+        
+        # 检查数据流校验结果
+        dataflow = plan.get("dataflow_check", {})
+        if not dataflow.get("valid", True):
+            issues = dataflow.get("issues", [])
+            warning_msg = "\n⚠️ 数据流问题:\n" + "\n".join(f"  - {issue}" for issue in issues)
+            print(warning_msg)
+        
+        # ========== Stage 3: Craft Agent - 任务执行 ==========
+        print("\n" + "="*50)
+        print("[Stage 3] Craft Agent - 任务执行")
+        print("="*50)
+        
+        craft_result = self.craft_agent.process(
+            user_input=clarified_input,
+            plan=plan,
+        )
+        
+        # 记录对话历史
+        self.conversation_history.append({"role": "user", "content": user_input})
+        
+        if craft_result.get("status") == "success":
+            report = craft_result.get("report", "")
+            self.conversation_history.append({"role": "assistant", "content": report})
+            result = f"✅ 任务执行完成！\n\n{report}"
+        elif craft_result.get("status") == "partial":
+            report = craft_result.get("report", "")
+            summary = craft_result.get("summary", "")
+            self.conversation_history.append({"role": "assistant", "content": f"{summary}\n\n{report}"})
+            result = f"⚠️ 任务部分完成\n{summary}\n\n{report}"
+        else:
+            error_msg = craft_result.get("summary", "执行失败")
+            self.conversation_history.append({"role": "assistant", "content": error_msg})
+            result = f"❌ 任务执行失败: {error_msg}"
+        
+        # 保存结果到 reports 目录
+        return self._save_result(user_input, result)

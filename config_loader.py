@@ -17,11 +17,11 @@ DEFAULT_CONFIG_FILE = "config.yaml"
 @dataclass
 class LLMConfig:
     """LLM 配置"""
-    base_url: str = "http://localhost:11434"
-    model: str = "qwen3:4b"
-    api_key: str = ""  # API Key，本地模型(Ollama)不需要
+    base_url: str = "https://apis.iflow.cn/v1"
+    model: str = "qwen3-32b"
+    api_key: str = "sk-a53bc75d6a2003fc593689e7e9cfbcfe"
     temperature: float = 0.7
-    timeout: int = 300
+    timeout: int = 800
     max_tokens: int = 4096
 
 
@@ -63,11 +63,64 @@ class DatabaseConfig:
 
 
 @dataclass
+class SearchConfig:
+    """搜索配置"""
+    enable: bool = True
+    timeout: int = 30
+    max_results: int = 5
+
+
+@dataclass
+class TextConfig:
+    """文本处理配置"""
+    enable: bool = True
+    max_length: int = 5000
+    pdf_library: str = "pypdf2"
+
+
+@dataclass
+class KnowledgeConfig:
+    """知识库配置"""
+    enable: bool = True
+    vitaldb_enable: bool = True
+    user_upload_dir: str = "knowledge/user_uploaded"
+    search_fallback: bool = True
+
+
+@dataclass
 class LoggingConfig:
     """日志配置"""
     level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: str = "bioagent.log"
+
+
+@dataclass
+class MultiAgentAskConfig:
+    """Ask Agent 配置"""
+    max_rounds: int = 3
+
+
+@dataclass
+class MultiAgentPlanConfig:
+    """Plan Agent 配置"""
+    validate_dataflow: bool = True
+
+
+@dataclass
+class MultiAgentCraftConfig:
+    """Craft Agent 配置"""
+    max_tool_rounds: int = 10
+    retry_on_fail: bool = True
+
+
+@dataclass
+class MultiAgentConfig:
+    """多角色 Agent 配置"""
+    enable: bool = False
+    ask: MultiAgentAskConfig = field(default_factory=MultiAgentAskConfig)
+    plan: MultiAgentPlanConfig = field(default_factory=MultiAgentPlanConfig)
+    craft: MultiAgentCraftConfig = field(default_factory=MultiAgentCraftConfig)
 
 
 @dataclass
@@ -79,7 +132,11 @@ class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     web: WebConfig = field(default_factory=WebConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
+    text: TextConfig = field(default_factory=TextConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    multi_agent: MultiAgentConfig = field(default_factory=MultiAgentConfig)
     
     # 运行时属性（非配置文件）
     skill_dir: str = ""
@@ -165,6 +222,15 @@ class ConfigLoader:
                 return p
             return os.path.join(skill_dir, p)
         
+        # 解析多角色配置（嵌套结构）
+        ma_data = data.get('multi_agent', {})
+        multi_agent = MultiAgentConfig(
+            enable=ma_data.get('enable', False) if isinstance(ma_data, dict) else False,
+            ask=MultiAgentAskConfig(**ma_data.get('ask', {})) if isinstance(ma_data.get('ask'), dict) else MultiAgentAskConfig(),
+            plan=MultiAgentPlanConfig(**ma_data.get('plan', {})) if isinstance(ma_data.get('plan'), dict) else MultiAgentPlanConfig(),
+            craft=MultiAgentCraftConfig(**ma_data.get('craft', {})) if isinstance(ma_data.get('craft'), dict) else MultiAgentCraftConfig(),
+        ) if isinstance(ma_data, dict) else MultiAgentConfig()
+        
         config = Config(
             llm=LLMConfig(**data.get('llm', {})),
             paths=paths,
@@ -172,7 +238,11 @@ class ConfigLoader:
             agent=AgentConfig(**data.get('agent', {})),
             web=WebConfig(**data.get('web', {})),
             database=DatabaseConfig(**data.get('database', {})),
+            search=SearchConfig(**data.get('search', {})),
+            text=TextConfig(**data.get('text', {})),
+            knowledge=KnowledgeConfig(**data.get('knowledge', {})),
             logging=LoggingConfig(**data.get('logging', {})),
+            multi_agent=multi_agent,
             skill_dir=skill_dir,
         )
         

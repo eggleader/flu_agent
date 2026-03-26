@@ -15,6 +15,7 @@ TOOL_MODULES = [
     "evolution",    # 进化（mafft/trimal/iqtree2/codeml）
     "viz",          # 可视化（质量图、长度分布、GC含量等）
     "other",        # 其他（swarm/circos/hhblits/hhsearch）
+    "knowledge",    # 知识库工具（搜索/文本处理/VITALdb）
 ]
 
 

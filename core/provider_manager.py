@@ -129,12 +129,25 @@ def probe_provider(provider: Provider, timeout: int = 10) -> Tuple[bool, List[st
 
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        # 尝试解析响应（可能返回空body或非JSON）
+        try:
+            resp.json()
+        except (json.JSONDecodeError, ValueError):
+            # 响应体为空或非JSON，保留已知模型列表，仅标记不可用
+            return False, models
+
         if resp.status_code == 200:
             return True, models
         # 连接失败时保留已知模型列表（用于显示），仅标记为不可用
         return False, models
+    except requests.exceptions.Timeout:
+        # 超时时保留已知模型列表
+        return False, models
+    except requests.exceptions.ConnectionError:
+        # 连接被拒绝时保留已知模型列表
+        return False, models
     except Exception:
-        # 超时/拒绝连接时保留已知模型列表
+        # 其他异常也保留已知模型列表
         return False, models
 
 

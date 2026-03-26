@@ -30,14 +30,15 @@ providers:
     # auto_discover: true  # 设为 true 则启动时自动拉取 API 支持的模型列表
 
   # ========== 硅基流动 (siliconflow.cn) ==========
-  # - name: "硅基流动"
-  #   type: openai_compatible
-  #   base_url: "https://api.siliconflow.cn/v1"
-  #   api_key: "sk-xxx"
-  #   models:
-  #     - "Qwen/Qwen3-8B"
-  #     - "deepseek-ai/DeepSeek-V3"
-  #   auto_discover: true
+  - name: "硅基流动"
+    type: openai_compatible
+    base_url: "https://cloud.siliconflow.cn/v1"
+    api_key: "sk-ichsidtksuazcnnfjtjyjlolwpjiquxicsotlwbshfpjphgb"
+    models:
+      - "deepseek-ai/DeepSeek-V3.2"
+      - "Qwen/Qwen3.5-397B-A17B"
+      - "THUDM/GLM-4-9b-chat"
+    auto_discover: false
 
   # ========== OpenAI ==========
   # - name: "OpenAI"

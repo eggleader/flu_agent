@@ -82,6 +82,30 @@ class Memory:
             )
         """)
         
+        # 用户画像表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id TEXT PRIMARY KEY,
+                name TEXT,
+                preferences TEXT,  -- JSON: 工具偏好、分析类型偏好等
+                history TEXT,      -- JSON: 历史任务类型统计
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        
+        # 工具使用统计表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tool_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                success INTEGER DEFAULT 1,
+                duration REAL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        
         conn.commit()
         conn.close()
     
@@ -250,3 +274,144 @@ class Memory:
         if self.current_session and self.current_session.session_id == session_id:
             self.current_session = None
             self.short_term_memory = []
+    
+    # ========== 用户画像方法 ==========
+    
+    def save_user_profile(self, user_id: str, name: str = None, preferences: Dict = None):
+        """保存用户画像"""
+        now = datetime.now().isoformat()
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT OR REPLACE INTO user_profiles 
+            (user_id, name, preferences, history, created_at, updated_at)
+            VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM user_profiles WHERE user_id = ?), ?), ?)
+        """, (
+            user_id,
+            name,
+            json.dumps(preferences or {}),
+            json.dumps({}),
+            user_id,
+            now,
+            now
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def load_user_profile(self, user_id: str) -> Optional[Dict]:
+        """加载用户画像"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT user_id, name, preferences, history, created_at, updated_at FROM user_profiles WHERE user_id = ?",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return None
+        
+        return {
+            "user_id": row[0],
+            "name": row[1],
+            "preferences": json.loads(row[2] or "{}"),
+            "history": json.loads(row[3] or "{}"),
+            "created_at": row[4],
+            "updated_at": row[5],
+        }
+    
+    def update_user_preferences(self, user_id: str, preferences: Dict):
+        """更新用户偏好"""
+        now = datetime.now().isoformat()
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 先获取现有偏好
+        cursor.execute("SELECT preferences FROM user_profiles WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            existing = json.loads(row[0] or "{}")
+            existing.update(preferences)
+            new_preferences = json.dumps(existing)
+        else:
+            new_preferences = json.dumps(preferences)
+        
+        cursor.execute(
+            "UPDATE user_profiles SET preferences = ?, updated_at = ? WHERE user_id = ?",
+            (new_preferences, now, user_id)
+        )
+        
+        conn.commit()
+        conn.close()
+    
+    def record_tool_usage(self, tool_name: str, session_id: str, success: bool = True, duration: float = None):
+        """记录工具使用"""
+        now = datetime.now().isoformat()
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO tool_usage (tool_name, session_id, success, duration, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+        """, (tool_name, session_id, 1 if success else 0, duration, now))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_tool_usage_stats(self, tool_name: str = None, days: int = 30) -> Dict:
+        """获取工具使用统计"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        if tool_name:
+            cursor.execute("""
+                SELECT tool_name, 
+                       COUNT(*) as total,
+                       SUM(success) as success_count,
+                       AVG(duration) as avg_duration
+                FROM tool_usage 
+                WHERE tool_name = ? AND timestamp > datetime('now', '-' || ? || ' days')
+                GROUP BY tool_name
+            """, (tool_name, days))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return {"tool_name": tool_name, "total": 0, "success_rate": 0.0}
+            
+            return {
+                "tool_name": row[0],
+                "total": row[1],
+                "success_count": row[2] or 0,
+                "success_rate": (row[2] or 0) / row[1] if row[1] > 0 else 0,
+                "avg_duration": row[3] or 0,
+            }
+        else:
+            cursor.execute("""
+                SELECT tool_name, COUNT(*) as total, SUM(success) as success_count
+                FROM tool_usage 
+                WHERE timestamp > datetime('now', '-' || ? || ' days')
+                GROUP BY tool_name
+                ORDER BY total DESC
+                LIMIT 10
+            """, (days,))
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "tool_name": row[0],
+                    "total": row[1],
+                    "success_count": row[2] or 0,
+                    "success_rate": (row[2] or 0) / row[1] if row[1] > 0 else 0,
+                })
+            
+            conn.close()
+            return {"top_tools": results, "period_days": days}

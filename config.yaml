@@ -4,12 +4,21 @@
 # ========== LLM 配置 ==========
 # 默认模型配置（可被 api_providers.yaml 中的用户选择覆盖）
 llm:
-  base_url: "http://localhost:11434"
-  model: "qwen3:4b"
-  api_key: ""
+  # --- 远程 API（默认使用心流） ---
+  base_url: "https://apis.iflow.cn/v1"
+  model: "qwen3-32b"
+  api_key: "sk-a53bc75d6a2003fc593689e7e9cfbcfe"
   temperature: 0.7
   timeout: 800
   max_tokens: 4096
+
+  # --- 本地 Ollama 备用（注释掉以防API不可用） ---
+  # base_url: "http://localhost:11434"
+  # model: "qwen3:4b"
+  # api_key: ""
+  # temperature: 0.7
+  # timeout: 800
+  # max_tokens: 4096
 
 # ========== 路径配置 ==========
 paths:
@@ -96,6 +105,39 @@ web:
 database:
   type: "sqlite"
   path: "data/sessions/bioagent.db"
+
+# ========== 搜索配置 ==========
+search:
+  enable: true
+  timeout: 30
+  max_results: 5
+
+# ========== 文本处理配置 ==========
+text:
+  enable: true
+  max_length: 5000
+  pdf_library: "pypdf2"  # pypdf2 或 pdfplumber
+
+# ========== 知识库配置 ==========
+knowledge:
+  enable: true
+  vitaldb_enable: true
+  user_upload_dir: "knowledge/user_uploaded"
+  search_fallback: true  # 知识库无结果时自动搜索
+
+# ========== 多角色 Agent 配置 ==========
+multi_agent:
+  enable: false  # 是否启用三角色模式（Ask-Plan-Craft）
+  # Ask Agent：需求理解与多轮澄清
+  ask:
+    max_rounds: 3  # 最大澄清轮次
+  # Plan Agent：技术路线规划
+  plan:
+    validate_dataflow: true  # 是否校验数据流
+  # Craft Agent：任务执行
+  craft:
+    max_tool_rounds: 10
+    retry_on_fail: true
 
 # ========== 日志配置 ==========
 logging:
