@@ -16,6 +16,15 @@ providers:
       - "gemma2:9b"
     auto_discover: true  # 设为 true 则启动时自动拉取本地已下载模型列表
 
+  # ========== Minimax ==========
+  - name: "Minimax"
+    type: openai_compatible
+    base_url: "https://api.minimaxi.com/v1"
+    api_key: "sk-cp-F05kDTJRe2pIPQ1O31nXxU-6dQm2pxGxAHHXHU3LCMJ0CDH8s5c_bbivfyX2ei-2j6UPrkKLAuZ14T9_Yz_5cevrK0_Fftt_IpFhZwMn6uVJ58Px84nO0ug"
+    models:
+      - "MiniMax-M2.7"
+    auto_discover: true
+
   # ========== 心流 (iflow.cn) ==========
   - name: "心流 API"
     type: openai_compatible
@@ -59,3 +68,4 @@ providers:
   #     - "deepseek-chat"
   #     - "deepseek-reasoner"
   #   auto_discover: true
+

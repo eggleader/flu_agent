@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BioAgent 启动入口
+FluAgent 启动入口
 支持多种模式：CLI / Web / API
 参考 POPGENAGENT 的 run.py 设计
 """
@@ -15,11 +15,11 @@ sys.path.insert(0, skill_dir)
 
 def run_cli(model_override: str = None):
     """命令行 REPL 模式"""
-    from core.agent import BioAgent
+    from core.agent import FluAgent
     from core.provider_manager import detect_available_providers, user_select_model
 
     print("=" * 50)
-    print("BioAgent - 生物信息学分析助手")
+    print("FluAgent - 生物信息学分析助手")
     print("=" * 50)
 
     # 确定模型配置
@@ -43,39 +43,57 @@ def run_cli(model_override: str = None):
     print("输入您的分析需求，输入 'quit' 或 'exit' 退出")
     print()
 
-    agent = BioAgent(**agent_kwargs)
-    
+    agent = FluAgent(**agent_kwargs)
+
     while True:
         try:
             user_input = input("\n用户> ").strip()
-            
+
             if user_input.lower() in ["quit", "exit", "q"]:
+                # 退出前询问是否保存
+                if agent.pending_save:
+                    save_choice = input("\n是否保存本次会话内容到 reports 目录? (y/n): ").strip().lower()
+                    if save_choice == "y":
+                        filepath = agent.save_pending()
+                        if filepath:
+                            print(f"✅ 已保存到: {filepath}")
+                        else:
+                            print("❌ 保存失败")
                 print("再见!")
                 break
-            
+
             if not user_input:
                 continue
-            
+
             response = agent.chat(user_input)
-            print(f"\nBioAgent> {response}")
-            
+            print(f"\nFluAgent> {response}")
+
         except KeyboardInterrupt:
             print("\n\n退出...")
+            # 退出前询问是否保存
+            if agent.pending_save:
+                save_choice = input("\n是否保存本次会话内容到 reports 目录? (y/n): ").strip().lower()
+                if save_choice == "y":
+                    filepath = agent.save_pending()
+                    if filepath:
+                        print(f"✅ 已保存到: {filepath}")
+                    else:
+                        print("❌ 保存失败")
             break
         except Exception as e:
             print(f"错误: {e}")
 
 
-def run_web(share: bool = False, debug: bool = False, port: int = 7860):
+def run_web(share: bool = False, debug: bool = False, port: int = 7860, use_ngrok: bool = False):
     """Web UI 模式"""
     from web.app import launch_web
-    
+
     print(f"启动 Web 服务: http://localhost:{port}")
-    launch_web(share=share, debug=debug, port=port)
+    launch_web(share=share, debug=debug, port=port, use_ngrok=use_ngrok)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BioAgent 启动器")
+    parser = argparse.ArgumentParser(description="FluAgent 启动器")
     parser.add_argument(
         "--mode", 
         choices=["cli", "web", "api"], 
@@ -89,9 +107,14 @@ def main():
         help="Web/API 端口 (默认: 7861)"
     )
     parser.add_argument(
-        "--share", 
+        "--share",
         action="store_true",
-        help="创建公开链接 (仅 Web 模式)"
+        help="创建 Gradio 分享链接 (临时链接)"
+    )
+    parser.add_argument(
+        "--ngrok",
+        action="store_true",
+        help="使用 ngrok 暴露公网访问 (需先安装 pyngrok 并配置)"
     )
     parser.add_argument(
         "--debug", 
@@ -110,11 +133,13 @@ def main():
     if args.mode == "cli":
         run_cli(model_override=args.model)
     elif args.mode == "web":
-        run_web(share=args.share, debug=args.debug, port=args.port)
+        run_web(share=args.share, debug=args.debug, port=args.port, use_ngrok=args.ngrok)
     elif args.mode == "api":
-        # TODO: API 模式
-        print("API 模式开发中...")
-        sys.exit(1)
+        # 启动 FastAPI API 服务
+        import uvicorn
+        from api.main import app
+        print(f"启动 API 服务: http://localhost:{args.port}")
+        uvicorn.run(app, host="0.0.0.0", port=args.port)
 
 
 if __name__ == "__main__":

@@ -4,13 +4,13 @@
 # ========== LLM 配置 ==========
 # 默认模型配置（可被 api_providers.yaml 中的用户选择覆盖）
 llm:
-  # --- 远程 API（默认使用心流） ---
-  base_url: "https://apis.iflow.cn/v1"
-  model: "qwen3-32b"
-  api_key: "sk-a53bc75d6a2003fc593689e7e9cfbcfe"
+  # --- Minimax API（默认） ---
+  base_url: "https://api.minimaxi.com/v1"
+  model: "MiniMax-M2.7"
+  api_key: "sk-cp-F05kDTJRe2pIPQ1O31nXxU-6dQm2pxGxAHHXHU3LCMJ0CDH8s5c_bbivfyX2ei-2j6UPrkKLAuZ14T9_Yz_5cevrK0_Fftt_IpFhZwMn6uVJ58Px84nO0ug"
   temperature: 0.7
   timeout: 800
-  max_tokens: 4096
+  # max_tokens: 4096
 
   # --- 本地 Ollama 备用（注释掉以防API不可用） ---
   # base_url: "http://localhost:11434"
@@ -34,11 +34,11 @@ paths:
 # 引擎启动时会自动检测可用性
 tools:
   # 序列处理
-  seqkit: "/Users/guojd/opt/anaconda3/envs/mamba_env/bin/seqkit"
+  seqkit: "/home/bgi-chao/miniconda3/envs/bioagent/bin/seqkit"
 
   # 质控
-  fastp: "/Users/guojd/opt/anaconda3/envs/mamba_env/bin/fastp"
-  fastqc: "/Users/guojd/opt/anaconda3/envs/mamba_env/bin/fastqc"
+  fastp: "/home/bgi-chao/miniconda3/envs/bioagent/bin/fastp"
+  fastqc: "/home/bgi-chao/miniconda3/envs/bioagent/bin/fastqc"
   multiqc: "/Users/guojd/opt/anaconda3/envs/mamba_env/bin/multiqc"
   cutadapt: "/Users/guojd/opt/anaconda3/envs/mamba_env/bin/cutadapt"
 

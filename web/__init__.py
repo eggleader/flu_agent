@@ -2,10 +2,10 @@
 Web 模块初始化
 """
 
-from .app import BioAgentWeb, create_app, launch_web
+from .app import FluAgentWeb, create_app, launch_web
 
 __all__ = [
-    "BioAgentWeb",
+    "FluAgentWeb",
     "create_app",
     "launch_web",
 ]

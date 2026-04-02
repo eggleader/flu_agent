@@ -1,4 +1,4 @@
-# BioAgent Python 依赖
+# FluAgent Python 依赖
 # 参考 POPGENAGENT 的 requirements.txt
 
 # 核心依赖
@@ -7,6 +7,7 @@ pyyaml>=6.0
 
 # Web UI
 gradio>=3.0.0
+pyngrok>=6.0.0  # ngrok 集成，用于公网访问
 
 # 可视化（可选）
 matplotlib>=3.5.0
@@ -22,3 +23,9 @@ numpy>=1.21.0
 
 # 其他
 python-dotenv>=0.19.0
+
+# API & Web Framework
+fastapi>=0.95.0
+uvicorn>=0.20.0
+python-multipart>=0.0.6
+httpx>=0.24.0

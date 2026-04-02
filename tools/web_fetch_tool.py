@@ -191,4 +191,4 @@ def register_all_tools():
     try:
         ToolRegistry.register(WebFetchTool(None))
     except Exception as e:
-        print(f"[BioAgent] 加载 WebFetchTool 失败: {e}")
+        print(f"[FluAgent] 加载 WebFetchTool 失败: {e}")

@@ -6,16 +6,18 @@ BioAgent 核心类
 import json
 import os
 import requests
-from typing import Dict, List, Any, Optional
+import asyncio
+import httpx
+from typing import Dict, List, Any, Optional, AsyncGenerator
 from .prompts import SYSTEM_PROMPT
 from .ask_agent import AskAgent
 from .plan_agent import PlanAgent
 from .craft_agent import CraftAgent
 
 
-class BioAgent:
+class FluAgent:
     """
-    生物信息学分析 Agent (重构版)
+    BioAgent - 生物信息学分析 Agent (重构版)
     支持：
     - Planner-Executor 双阶段模式（复杂任务）
     - 直接 FC 模式（简单任务）
@@ -27,7 +29,7 @@ class BioAgent:
     
     def __init__(
         self,
-        name: str = "BioAgent",
+        name: str = "FluAgent",
         model: str = None,
         enable_planner: bool = False,  # 默认关闭，模型升级后可启用
         planner_threshold: int = 2,
@@ -59,6 +61,9 @@ class BioAgent:
         
         # 对话历史
         self.conversation_history: List[Dict[str, str]] = []
+
+        # 待保存内容（退出时询问是否保存）
+        self.pending_save: Optional[Dict[str, str]] = None
         
         # 加载知识库
         self.knowledge_context = self._load_knowledge()
@@ -119,7 +124,7 @@ class BioAgent:
                 max_tool_rounds=cfg.multi_agent.craft.max_tool_rounds,
                 retry_on_fail=cfg.multi_agent.craft.retry_on_fail,
             )
-            print(f"[BioAgent] 三角色模式已启用: Ask-Plan-Craft")
+            print(f"[FluAgent] 三角色模式已启用: Ask-Plan-Craft")
     
     def _load_knowledge(self) -> str:
         """加载知识库内容"""
@@ -147,9 +152,9 @@ class BioAgent:
             from workflow import get_engine
             engine = get_engine()
             wf_count = len(engine.workflows)
-            print(f"[BioAgent] 已加载 {wf_count} 个工作流（作为知识参考）")
+            print(f"[FluAgent] 已加载 {wf_count} 个工作流（作为知识参考）")
         except Exception as e:
-            print(f"[BioAgent] 警告: 工作流引擎加载失败: {e}")
+            print(f"[FluAgent] 警告: 工作流引擎加载失败: {e}")
     
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
@@ -238,47 +243,58 @@ class BioAgent:
         return self._save_result(user_input, result)
     
     def _save_result(self, user_input: str, result: str) -> str:
-        """保存分析结果到 reports 目录"""
+        """收集待保存内容（不再自动保存，退出时询问用户）"""
+        # 存储待保存内容
+        self.pending_save = {
+            "user_input": user_input,
+            "result": result,
+        }
+        return result
+
+    def save_pending(self) -> Optional[str]:
+        """保存待保存内容到 reports 目录，返回文件路径"""
+        if not self.pending_save:
+            return None
+
         import datetime
         from config_loader import get_reports_dir
-        
+
         try:
             reports_dir = get_reports_dir()
             os.makedirs(reports_dir, exist_ok=True)
-            
+
             # 生成文件名
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"analysis_{timestamp}.md"
             filepath = os.path.join(reports_dir, filename)
-            
+
             # 构建报告内容
-            report_content = f"""# BioAgent 分析报告
+            report_content = f"""# FluAgent 分析报告
 
 **时间**: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## 用户需求
 
-{user_input}
+{self.pending_save['user_input']}
 
 ## 分析结果
 
-{result}
+{self.pending_save['result']}
 
 ---
-*由 BioAgent v2.0 生成*
+*由 FluAgent v2.0 生成*
 """
-            
+
             # 保存文件
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(report_content)
-            
-            # 返回结果加上保存路径
-            return f"{result}\n\n📁 结果已保存到: `{filepath}`"
-            
+
+            self.pending_save = None
+            return filepath
+
         except Exception as e:
-            # 保存失败不影响主流程
-            print(f"[BioAgent] 警告: 保存结果失败: {e}")
-            return result
+            print(f"[FluAgent] 警告: 保存结果失败: {e}")
+            return None
     
     def _find_similar_tool(self, tool_name: str) -> Optional[str]:
         """从已注册工具中找到最相似的工具名（模糊匹配）"""
@@ -421,6 +437,149 @@ class BioAgent:
         message = choices[0].get("message", {})
         return message.get("content", "")
     
+    async def _call_llm_async(
+        self,
+        messages: List[Dict[str, str]],
+        tools: List[Dict] = None,
+        model: str = None,
+        temperature: float = None,
+        stream: bool = False,
+    ) -> Any:
+        """异步调用 LLM API"""
+        model = model or self.model
+        temperature = temperature or self.temperature
+        
+        headers = {"Content-Type": "application/json"}
+        if self.llm_api_key:
+            headers["Authorization"] = f"Bearer {self.llm_api_key}"
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream
+        }
+        if tools:
+            payload["tools"] = tools
+            
+        if self.llm_base_url.endswith("/v1/chat/completions"):
+            llm_url = self.llm_base_url
+        elif self.llm_base_url.endswith("/v1"):
+            llm_url = f"{self.llm_base_url}/chat/completions"
+        else:
+            llm_url = f"{self.llm_base_url}/v1/chat/completions"
+
+        async with httpx.AsyncClient(timeout=self.llm_timeout) as client:
+            if not stream:
+                response = await client.post(llm_url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+            else:
+                # Streaming handled externally
+                return client.stream("POST", llm_url, headers=headers, json=payload)
+
+    async def chat_stream(self, user_input: str) -> AsyncGenerator[str, None]:
+        """
+        处理用户输入 - 异步流式模式
+        """
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            *self.conversation_history,
+            {"role": "user", "content": user_input}
+        ]
+        
+        max_rounds = self.max_tool_rounds
+        for round_idx in range(max_rounds):
+            # 记录当前轮次的完整内容，用于回填历史
+            full_content = ""
+            tool_calls = []
+            
+            headers = {"Content-Type": "application/json"}
+            if self.llm_api_key:
+                headers["Authorization"] = f"Bearer {self.llm_api_key}"
+            
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "stream": True
+            }
+            if self.tools:
+                payload["tools"] = self.tools
+
+            llm_url = self.llm_base_url
+            if not (llm_url.endswith("/v1/chat/completions") or llm_url.endswith("/chat/completions")):
+                 llm_url = f"{llm_url.rstrip('/')}/v1/chat/completions"
+
+            async with httpx.AsyncClient(timeout=self.llm_timeout) as client:
+                async with client.stream("POST", llm_url, headers=headers, json=payload) as response:
+                    if response.status_code != 200:
+                        yield f"错误: API 返回 {response.status_code}"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        
+                        try:
+                            data = json.loads(data_str)
+                            delta = data['choices'][0]['delta']
+                            
+                            if "content" in delta and delta["content"]:
+                                content = delta["content"]
+                                full_content += content
+                                yield content
+                            
+                            if "tool_calls" in delta:
+                                for tc_delta in delta["tool_calls"]:
+                                    if len(tool_calls) <= tc_delta["index"]:
+                                        tool_calls.append({
+                                            "id": tc_delta.get("id", ""),
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""}
+                                        })
+                                    
+                                    curr = tool_calls[tc_delta["index"]]
+                                    if "id" in tc_delta:
+                                        curr["id"] = tc_delta["id"]
+                                    if "function" in tc_delta:
+                                        if "name" in tc_delta["function"]:
+                                            curr["function"]["name"] += tc_delta["function"]["name"]
+                                        if "arguments" in tc_delta["function"]:
+                                            curr["function"]["arguments"] += tc_delta["function"]["arguments"]
+                        except Exception as e:
+                            print(f"Error parsing stream: {e}")
+                            continue
+
+            if not tool_calls:
+                # 无工具调用，结束
+                self.conversation_history.append({"role": "user", "content": user_input})
+                self.conversation_history.append({"role": "assistant", "content": full_content})
+                self._save_result(user_input, full_content)
+                return
+
+            # 有工具调用
+            messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+            
+            for tc in tool_calls:
+                tool_name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except:
+                    args = {}
+                
+                yield f"\n\n> 正在执行工具: {tool_name}...\n"
+                result_str = self._execute_tool(tool_name, args)
+                yield f"\n工具结果: \n{result_str}\n\n"
+                
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_str})
+            
+            # 继续下一轮 LLM 调用
+
     def reset_conversation(self):
         """重置对话历史"""
         self.conversation_history = []
