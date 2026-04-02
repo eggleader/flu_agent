@@ -26,11 +26,11 @@ def discover_and_register_tools():
             module = __import__(f"tools.{module_name}_tool",
                                 fromlist=["register_all_tools"])
             module.register_all_tools()
-            print(f"[BioAgent] 已加载工具模块: {module_name}")
+            print(f"[FluAgent] 已加载工具模块: {module_name}")
         except ImportError as e:
-            print(f"[BioAgent] 警告: 无法加载工具模块 {module_name}: {e}")
+            print(f"[FluAgent] 警告: 无法加载工具模块 {module_name}: {e}")
         except Exception as e:
-            print(f"[BioAgent] 警告: 加载工具模块 {module_name} 时出错: {e}")
+            print(f"[FluAgent] 警告: 加载工具模块 {module_name} 时出错: {e}")
 
 
 def get_available_tools():

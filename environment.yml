@@ -30,7 +30,7 @@ dependencies:
   - kraken2
   - mafft
   - trimal
-  - iqtree2
+  - iqtree
   
   # 可选：其他生信工具
   # - ete3

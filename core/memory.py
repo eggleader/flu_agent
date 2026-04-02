@@ -46,7 +46,7 @@ class Memory:
     - 长期记忆：SQLite 数据库持久化
     """
     
-    def __init__(self, db_path: str = "data/sessions/bioagent.db"):
+    def __init__(self, db_path: str = "data/sessions/fluagent.db"):
         self.db_path = db_path
         self._init_db()
         
@@ -105,7 +105,21 @@ class Memory:
                 timestamp TEXT NOT NULL
             )
         """)
-        
+
+        # 用户反馈表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                user_id TEXT,
+                message_index INTEGER,
+                rating INTEGER,
+                comment TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+            )
+        """)
+
         conn.commit()
         conn.close()
     
@@ -415,3 +429,106 @@ class Memory:
             
             conn.close()
             return {"top_tools": results, "period_days": days}
+
+    # ========== 反馈管理方法 ==========
+
+    def save_feedback(self, session_id: str, user_id: str, message_index: int,
+                      rating: int, comment: str = None) -> bool:
+        """保存用户反馈"""
+        now = datetime.now().isoformat()
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                INSERT INTO feedback (session_id, user_id, message_index, rating, comment, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (session_id, user_id, message_index, rating, comment, now))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"[FluAgent] 保存反馈失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_user_sessions(self, user_id: str, limit: int = 20) -> List[Dict]:
+        """获取指定用户的所有会话"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT s.session_id, s.created_at, s.updated_at, s.metadata,
+                   COUNT(m.id) as message_count
+            FROM sessions s
+            LEFT JOIN messages m ON s.session_id = m.session_id
+            WHERE s.metadata LIKE ?
+            GROUP BY s.session_id
+            ORDER BY s.updated_at DESC
+            LIMIT ?
+        """, (f'%\"user_id\": \"{user_id}\"%', limit))
+
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                "session_id": row[0],
+                "created_at": row[1],
+                "updated_at": row[2],
+                "metadata": json.loads(row[3] or "{}"),
+                "message_count": row[4],
+            })
+
+        conn.close()
+        return sessions
+
+    def list_user_sessions(self, user_id: str, limit: int = 20) -> List[Dict]:
+        """获取用户会话列表（按更新时间倒序）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT session_id, created_at, updated_at, metadata
+            FROM sessions
+            ORDER BY updated_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                "session_id": row[0],
+                "created_at": row[1],
+                "updated_at": row[2],
+                "metadata": json.loads(row[3] or "{}"),
+            })
+
+        conn.close()
+        return sessions
+
+    def get_feedback_stats(self, days: int = 30) -> Dict:
+        """获取反馈统计"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                AVG(rating) as avg_rating,
+                SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN rating <= 2 THEN 1 ELSE 0 END) as negative
+            FROM feedback
+            WHERE created_at > datetime('now', '-' || ? || ' days')
+        """, (days,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return {
+            "total": row[0] or 0,
+            "avg_rating": round(row[1], 2) if row[1] else 0,
+            "positive_count": row[2] or 0,
+            "negative_count": row[3] or 0,
+            "period_days": days,
+        }
+
